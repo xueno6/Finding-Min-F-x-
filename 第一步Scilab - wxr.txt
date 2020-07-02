@@ -1,0 +1,1079 @@
+// In this program, we study the behavior of resin bead with two main chemical reactions:
+// - On the surface only: CO2 + HO- = HCO3-
+// - On the whole system (surface + inside): HCO3- + HO- = CO3-- + H2O
+// 
+// The system is a bead, and because of spherical symmetry, we simply consider a one-dimensional problem along
+// the r axis. Also, the equations are nondimensionalized in this program.
+// 
+// The boundary conditions are:
+// - On the surface (r=R): constant P(H2O) and variable P(CO2)
+// - On r=0: nul flux for all the quantities.
+// 
+// We want to plot P(CO2) knowing intitial and boundary conditions. 
+// At steady state, the quantities will not depend on time and their value will be
+// equal everywhere in the bead.
+// 
+// NCO3, NHCO3, NH2O, NHO = respectively quantity per unit volume of CO3--,
+// HCO3-, H2O and HO-.
+// 
+// The goal of this program is to get PCO2(t_m) and then compare its evolution 
+// to a similar real experiment so that we can adjust the fixed parameters to improve the fitting. 
+// For that purpose, we need to calculate NHO(r_j,t_m), NHCO3(r_j,t_m), NCO3(r_j,t_m) and NH2O(r_j,t_m), quantities per unit volum 
+// which satisfy the reaction-diffusion equations. Each of these values will be stored in a matrix of size (J+1,M+1).
+// 
+// Some fixed parameters can be experimentally estimated. The others have to be adjusted according to the simulation results.
+
+
+
+
+// NB1: You can comment out entire code blocks by pressing "cmd + Shift + D" (mac) or "ctrl + Shift + D"(windows)
+// NB2: On the opposite, you can comment entire code blocks by pressing "cmd + D" (mac) or "ctrl + D"(windows)
+
+
+
+
+clear;
+
+
+
+
+//-----------------------i. Definition of parameters----------------------------
+
+// 2 - single freq parameters-------------------------------------------------- Those parameters have to be commented out only when simulating four packet of monofrequency waves of P(H2O)
+
+
+T1 = 20*60
+T2 = 50*60
+T3 = 80*60
+T4 = 140*60
+NB1 = 20
+NB2 = 15
+NB3 = 15
+NB4 = 12
+
+T = ((2+4*7)*3600 + T1*NB1 + T2*NB2 + T3*NB3 + T4*NB4)/952    //Overall time. The coming line giving the definition of T (cf # - General parameters) has to be commented and replaced by this one.
+
+// # - General parameters------------------------------------------------------ 
+
+// Definition of T (time) and R (radius)
+// T = 20;     // 1 T unit <=> 952 sec (15.873 min)
+R = 1;      // Since the equations are nondimensionalized with R as a reference space unit, our nondimensionalized bead' radius equals to one
+
+// "Size" of matrices - the real matrices have the size (J+1,M+1)
+J = 5;
+M = 2*int(2*(T*J*J)/(R*R));     //Based on the Courant–Friedrichs–Lewy condition
+
+// Deltat and Deltar - time & space steps for the numerical simulation
+Deltat = T/M;
+Deltar = R/J;
+
+// discrete instant t_m = (m-1) Deltat where Deltat = T / M
+// discrete position r_j = (j-1) Deltax where Deltar = R / J
+
+
+// Fitting parameters---------------------------------------------------------- /!\ TO BE MODIFIED WHEN IMPROVING THE FITTING /!\
+
+// Nondimensionalized diffusion coefficients taking water diffusion coefficient as a reference unit
+CH2O = 1
+CHO = 4e-1
+CHCO3 = 1.2e-1
+CCO3 = 1.5e-1
+
+// K1, is the chemical equilibrium constant for the reaction: CO2 + HO- = HCO3-
+// K1 is supposed to be constant here.
+K1 = 4e9;
+
+// ka is the Henry constant. It is the link between the partial pressure of water and the water
+// quantity on the surface: P(H2O) = ka * n(H2O)
+ka = 1e-5;
+
+//kC is the ratio Volume(Bead)/Volume(Air) that will link P(CO2) with NHCO3 + NCO3
+kC = 4e-3;
+
+// K2 is the chemical equilibrium constant for the reaction: HCO3- + HO- = CO3-- + H2O. We'll make the assumption
+//that K2 is also a function of NH2O with K2 = kp * NH2O^p. This relation is true everywhere. Here we define the value
+// of kp and p.
+kp = 5e-12;
+p = 9.5;
+
+// Peq is the reference pressure unit in our nondimensionlized equations
+Peq = 5.104e7 //unit = 0,1 Pa
+//Peq = n0.R.T in Pa with n0 = 1,94 mol/kg with 
+//a density d = 1,08 : 1m3 of bead <-> 1080 kg bead (# d' = 0,67 kg/L in the bucket) 
+//==> n0 = 2095 mol/m3 ==> Peq = n0.R.T = 5,104 10^6 Pa
+
+
+ 
+ 
+ 
+//--------------------------ii. Initial Conditions------------------------------
+
+//Initial condions outside the bead
+
+PH2O = 15000 / Peq                      //initial PH2O: 15 000 / Peq means "150 000 Pa Nondimensionalized" since pressures are given in 0,1 Pa
+// In the case of oscillating PH2O (cf Boundary conditions below), this value will be used as a mean value or initial value for P(H2O).
+
+PCO2 = 500 / Peq                        //initial PH2O: 500 / Peq means "5 000 Pa Nondimensionalized" since pressures are given in 0,1 Pa
+
+
+// Initial conditions inside the bead (for j = 1:J)
+
+// Inside the bead, we want to check : chemical equilibrium (K2) and charge
+// neutrality
+// * K2 = (NCO3 * NH2O) / (NHCO3 * NHO)
+// * NHCO3 + NHO + 2NCO3 = 1
+// 
+// We have to choose initial conditions which verify those relations. Then,
+// the rest of the program assures that those relations will always be
+// verified. We chose equilibrium initial condition :
+
+// We can calculate NH2O inside the bead (NH2Oins) thanks to Henry's law
+NH2Oins = PH2O / ka;
+
+// Once you know nH2O, you can calculate K2 inside the beads (K2ins)
+K2ins = kp * NH2Oins^p;
+
+// The goal now is to find NHO, NHCO3 and NCO3 inside the
+// bead. We have 3 equations:
+// * K1 = NHCO3 / (NHO * PCO2) (chemical equilibrium)
+// * K2 = (NCO3 * NH2O) / (NHCO3 * NHO) (chemical equilibrium)
+// * NHCO3 + NHO + 2NCO3 = 1 (charge neutrality)
+// and 3 unknown: NHO, NHCO3 and NCO3.
+// By combining the 3 equations, we find that NHCO3 verifies:
+// 2 * ((ka * K2ins)/(PH2Oins * PCO2ins * K1)) * NHCO3*NHCO3 + NHCO3*(1 + 1/(PCO2
+// * K1)) - 1 = 0.
+// We use a bisection method to solve this equation.
+
+a4 = 0;
+b4 = 1;
+
+fa4 = 2 * ((ka * K2ins)/(PH2O * PCO2 * K1)) * a4*a4 + a4*(1 + 1/(PCO2 * K1)) - 1;
+fb4 = 2 * ((ka * K2ins)/(PH2O * PCO2 * K1)) * b4*b4 + b4*(1 + 1/(PCO2 * K1)) - 1;
+
+eps = 1e-9;
+while (b4-a4) >eps
+    X4 = (a4+b4)/2;
+    fX4 = 2 * ((ka * K2ins)/(PH2O * PCO2 * K1)) * X4*X4 + X4*(1 + 1/(PCO2 * K1)) - 1;
+    if (sign(fX4) == sign(fa4))
+        a4 = X4;
+        fa4 = fX4;
+    else
+        b4 = X4;
+        fb4 = fX4;
+    end
+end
+
+NHCO3ins = X4;
+
+// Once NHCO3 is known, it is simple to find NHO and NCO3.
+NHOins = NHCO3ins / (K1 * PCO2);
+NCO3ins = NHCO3ins * NHOins * ka * K2ins /PH2O;
+
+// Definition and initialization of the matrices
+X = zeros(J,M);
+PCO2R = zeros(1,M+1);
+PH2OR = zeros(1,M+1);
+PCO2_OUT = zeros(M+1,1);
+PH2O_OUT = zeros(M+1,1);
+
+
+MCO3 = zeros(J+1,M+1);
+MHCO3 = zeros(J+1,M+1);
+MHO = zeros(J+1,M+1);
+MH2O = zeros(J+1,M+1);
+
+MCO3d = zeros(J+1,M);
+MHCO3d = zeros(J+1,M);
+MHOd = zeros(J+1,M);
+MH2Od = zeros(J+1,M);
+
+MCO3dd = zeros(J+1,M);
+MHCO3dd = zeros(J+1,M);
+MHOdd = zeros(J+1,M);
+MH2Odd = zeros(J+1,M);
+
+delta_electro = zeros(J+1,M);
+MDIC = zeros(J+1,M+1);
+K2 = zeros(J+1,M+1);
+Vd = zeros(J+1,M);
+Vdd = zeros(J+1,M);
+
+JH2O = zeros(J+1,M);
+JHO = zeros(J+1,M);
+JCO3 = zeros(J+1,M);
+JHCO3 = zeros(J+1,M);
+JDIC = zeros(J+1,M);
+
+
+// Initial overall equilibrium everywhere in the bead. At the begining, the system is at the corresponding steady state
+for j = 1:J+1
+    MHO(j,1) = NHOins;
+    MHCO3(j,1) = NHCO3ins;
+    MCO3(j,1) = NCO3ins;
+    MH2O(j,1) = NH2Oins;
+    MDIC(j,1) = MCO3(j,1) + MHCO3(j,1);
+end
+
+
+
+
+
+
+//----------iii. Boundary conditions we have to calculate at each time-----------
+
+// At r = R, we know P(H2O) at any time since we set up the experiment.
+
+
+// 2 - single freq PH2O-------------------------------------------------------- Those parameters have to be commented out only when simulating four packet of monofrequency waves of P(H2O)
+
+
+////T1 = 5700 sec <=> T1 = 5.987 T --> w1 = 1.0494 (w=2Pi/T)
+
+
+for m = 1 : M+1
+    PH2OR(m) = PH2O
+end 
+m00 = round((2*3600*M)/(952*T))+1
+m0 = round((7*3600*M)/(952*T))
+//
+//
+////T1 = 20 min - 20 periods
+w1 = 2*%pi/(T1/952)
+m1 = m00
+m11 = m1 + round((T1*NB1*M)/(952*T))
+if NB1 > 0 then
+for m = m1 : m11
+    PH2OR(m) = PH2O + PH2O/3*sin(w1*(m-1-(m1-1))*T/M)
+end 
+end
+//
+//
+////T2 = 50 min - 20 periods
+w2 = 2*%pi/(T2/952)
+m2 = m11 + m0
+m22 = m2 + round((T2*NB2*(M))/(952*T))
+if NB2 > 0 then
+for m = m2 : m22
+    PH2OR(m) = PH2O + PH2O/3*sin(w2*(m-1-(m2-1))*T/M)
+end 
+end
+//
+////T3 = 80 min - 15 periods
+w3 = 2*%pi/(T3/952)
+m3 = m22 + m0
+m33 = m3 + round((T3*NB3*(M))/(952*T))
+if NB3 > 0 then
+for m = m3 : m33
+    PH2OR(m) = PH2O + PH2O/3*sin(w3*(m-1-(m3-1))*T/M)
+end
+end
+//
+//
+////T4 = 140 min - 10 periods
+w4 = 2*%pi/(T4/952)
+m4 = m33 + m0
+m44 = m4 + round((T4*NB4*(M))/(952*T))
+if NB4 > 0 then
+for m = m4 : m44
+    PH2OR(m) = PH2O + PH2O/3*sin(w4*(m-1-(m4-1))*T/M)
+end 
+end
+
+
+
+
+
+//-------------------------iv. Diffusion Process -------------------------------
+
+//The purpose of this part is to calculate the evolution of the species' concentration at any time everywhere in the bead.
+//Knowing the concentration of the species, we can then calculate the evolution of P(CO2).
+//In order to do that, we have to implement all of the equations that rule the system (diffusion, chemical reaction, charge neutrality, etc.)
+//and then solve the system numerically thanks to a finite difference method, in our case the FTCS (Forward-Time Central-Space) scheme.
+
+
+// We can already calculate NH2O at the surface (NH2OR) at any time thanks to Henry's law
+for m = 1:M+1
+    // By definition for H2O
+    NH2OR(m) = PH2OR(m) / ka;
+
+    // Once you know NH2O, you can calculate K2
+    K2R(m) = kp * NH2OR(m).^p;
+end
+
+// We also know PCO2 at the surface (PCO2R) at the begining for m = 1 (t_1)
+PCO2R(1) = PCO2
+
+
+
+for m = 1:M
+    // At the center of the bead, all the derivatives are zero. This will
+    // help us calculate the second derivatives at r1 = 0.
+    // We will thus consider two different cases: in the bead except the center & at the center
+
+
+//-------------------------------------In the bead except the center
+
+    // It is now time to consider the two-step process which changes NHO, NHCO3, NH2O and NCO3 inside the bead. First, the system
+    // diffuses and the quantities vary in DeltaNHO2, DeltaNHCO32, DeltaNH2O2 or DeltaNCO32.
+    // Then, the system returns to equilibrium through the vector alpha(1,1,-1,-1).
+
+    for j = 2:J
+        // Discrete first derivatives
+        MHOd(j,m)=(MHO(j+1,m) - MHO(j-1,m))/(2*Deltar);
+        MHCO3d(j,m)=(MHCO3(j+1,m) - MHCO3(j-1,m))/(2*Deltar);
+        MCO3d(j,m)=(MCO3(j+1,m) - MCO3(j-1,m))/(2*Deltar);
+        MH2Od(j,m)=(MH2O(j+1,m) - MH2O(j-1,m))/(2*Deltar);
+        Vd(j,m)=(CHO*MHOd(j,m)+CHCO3*MHCO3d(j,m)+2*CCO3*MCO3d(j,m))/(CHO*MHO(j,m)+CHCO3*MHCO3(j,m)+4*CCO3*MCO3(j,m))
+
+        // Discrete second derivatives
+        MHOdd(j,m)=(MHO(j+1,m) - 2*MHO(j,m) + MHO(j-1,m))/(Deltar * Deltar);
+        MHCO3dd(j,m)=(MHCO3(j+1,m) - 2*MHCO3(j,m) + MHCO3(j-1,m))/(Deltar * Deltar);
+        MCO3dd(j,m)=(MCO3(j+1,m) - 2*MCO3(j,m) + MCO3(j-1,m))/(Deltar * Deltar);
+        MH2Odd(j,m)=(MH2O(j+1,m) - 2*MH2O(j,m) + MH2O(j-1,m))/(Deltar * Deltar);
+        Vdd(j,m)=(CHO*MHOdd(j,m)+CHCO3*MHCO3dd(j,m)+2*CCO3*MCO3dd(j,m))/(CHO*MHO(j,m)+CHCO3*MHCO3(j,m)+4*CCO3*MCO3(j,m))-(CHO*MHOd(j,m)+CHCO3*MHCO3d(j,m)+2*CCO3*MCO3d(j,m))*(CHO*MHOd(j,m)+CHCO3*MHCO3d(j,m)+4*CCO3*MCO3d(j,m))/((CHO*MHO(j,m)+CHCO3*MHCO3(j,m)+4*CCO3*MCO3(j,m))^2)
+
+
+        // Quantities diffusing between t_m and t_(m+1)
+        // With the charged species, we consider that the flux is the sum of the
+        // diffusion current and the drift current.
+        DeltaNHO2 = Deltat*CHO/9*(MHOdd(j,m) - MHOd(j,m)*Vd(j,m) - MHO(j,m)*Vdd(j,m) + 2/((j-1)*Deltar)*MHOd(j,m) - 2/((j-1)*Deltar)*MHO(j,m)*Vd(j,m));
+        DeltaNHCO32 = Deltat*CHCO3/9*(MHCO3dd(j,m) - MHCO3d(j,m)*Vd(j,m) - MHCO3(j,m)*Vdd(j,m) + 2/((j-1)*Deltar)*MHCO3d(j,m) - 4/((j-1)*Deltar)*MHCO3(j,m)*Vd(j,m));
+        DeltaNCO32 = Deltat*CCO3/9*(MCO3dd(j,m) - 2*MCO3d(j,m)*Vd(j,m) - 2*MCO3(j,m)*Vdd(j,m) + 2/((j-1)*Deltar)*MCO3d(j,m) - 2/((j-1)*Deltar)*MCO3(j,m)*Vd(j,m));
+        DeltaNH2O2 = Deltat/9*(MH2Odd(j,m) + 2/((j-1)*Deltar)*MH2Od(j,m));
+        
+
+        // After diffusion the system wants to come back to equilibrium. So it
+        // follows the vector delta_n_reaction = alpha(1,1,-1,-1) with alpha positive
+        // or negative according to whether HO- and HCO3- disappear to give CO3-- and H2O (alpha<0) or the
+        // other way round (alpha>0). Here alpha is called X.
+        // After diffusion, the quantities are equal to ni + Deltani2. After
+        // diffusion + reaction, their value is ni + Deltani2 +/- alpha.
+        // Those quantities must always remain positive.
+
+        // The goal is to find X (alpha).
+        // The method used here is a bisection method.
+
+        // Alpha (X)
+        if (MHO(j,m) + DeltaNHO2) > (MHCO3(j,m) + DeltaNHCO32) then
+            a = -(MHCO3(j,m) + DeltaNHCO32);
+        else
+            a = - (MHO(j,m) + DeltaNHO2);
+        end
+
+        if (MCO3(j,m) + DeltaNCO32) > (MH2O(j,m) + DeltaNH2O2) then
+            b = (MH2O(j,m) + DeltaNH2O2);
+        else
+            b = (MCO3(j,m) + DeltaNCO32);
+        end
+
+        // X must be comprised between a and b : a<X<b
+        a2 = a;
+        b2 = b;
+
+        K2a = kp * (MH2O(j,m) + DeltaNH2O2 - a)^p;
+        K2b = kp * (MH2O(j,m) + DeltaNH2O2 - b)^p;
+
+        fa = K2a * (MHO(j,m) + DeltaNHO2 + a) * (MHCO3(j,m) + DeltaNHCO32 + a) - (MCO3(j,m) + DeltaNCO32 - a) * (MH2O(j,m) + DeltaNH2O2 - a);
+        fb = K2b * (MHO(j,m) + DeltaNHO2 + b) * (MHCO3(j,m) + DeltaNHCO32 + b) - (MCO3(j,m) + DeltaNCO32 - b) * (MH2O(j,m) + DeltaNH2O2 - b);
+
+        if (b2-a2)<0 then
+            warning ("absurd alpha boundaries")
+            return
+        end
+
+        eps = 1e-9;
+        while (b2-a2) >eps
+            if (fa*fb>0) then
+                warning("fa and fb have the same sign")
+                return
+            end
+            X(j,m) = (a2+b2)/2;
+            K2X = kp * (MH2O(j,m) + DeltaNH2O2 - X(j,m))^p;
+            fX = K2X * (MHO(j,m) + DeltaNHO2 + X(j,m)) * (MHCO3(j,m) + DeltaNHCO32 + X(j,m)) - (MCO3(j,m) + DeltaNCO32 - X(j,m)) * (MH2O(j,m) + DeltaNH2O2 - X(j,m));
+            if (sign(fX) == sign(fa)) then
+                a2 = X(j,m);
+                fa = fX;
+                K2a = K2X;
+            else
+                b2 = X(j,m);
+                fb = fX;
+                K2b = K2X;
+            end
+        end
+
+        if X(j,m) - a < 0 then
+            warning ("alpha is not bounded IN")
+            return
+        end
+
+        if X(j,m) - b > 0 then
+            warning ("alpha is not bounded IN")
+            return
+        end
+
+
+        // At t + Deltat: calculation of the new concentration and flux at t_(m+1)
+        MHO(j,m+1) = MHO(j,m) + DeltaNHO2 + X(j,m);
+        MHCO3(j,m+1) = MHCO3(j,m) + DeltaNHCO32 + X(j,m);
+        MCO3(j,m+1) = MCO3(j,m) + DeltaNCO32 - X(j,m);
+        MH2O(j,m+1) = MH2O(j,m) + DeltaNH2O2 - X(j,m);
+        MDIC(j,m+1) = MCO3(j,m+1) + MHCO3(j,m+1);
+
+        JHO(j,m)= - CHO * MHOd(j,m) + CHO * Vd(j,m) * MHO(j,m)
+        JH2O(j,m)= - CH2O * MH2Od(j,m)
+        JHCO3(j,m)= - CHCO3 * MHCO3d(j,m) + CHCO3 * Vd(j,m) * MHCO3(j,m)
+        JCO3(j,m)= - CCO3 * MCO3d(j,m) + 2 * CCO3 * Vd(j,m) * MCO3(j,m)
+        JDIC(j,m)= JHCO3(j,m) + JCO3(j,m)
+    end
+
+
+//-------------------------------------At the center of the bead (r_1 = 0)
+
+    // As we consider a Neumann boundary condition at r1 = 0, we have to
+    // calculate the evolution of quantities at the center.
+
+    // dni/dr (r_1 = 0) = 0 = (ni(r_2) - ni(r_0))/(2 * Deltar) where r_0 is a
+    // fictitious point => ni(r_2) = ni(r_0)
+    // d^2ni/dr^2 (r_1) = (ni(r_2) - 2ni(r_1) + ni(r_0))/(Deltar)^2 = 2 * (ni(r_2) - ni(r_1))/(Deltar)^2
+
+        // Discrete first derivatives
+    MHOd(1,m)=0;
+    MHCO3d(1,m)=0;
+    MCO3d(1,m)=0;
+    MH2Od(1,m)=0;
+    Vd(1,m)=0;
+
+        // Discrete second derivatives
+    MHOdd(1,m)=2*(MHO(2,m) - MHO(1,m))/(Deltar * Deltar);
+    MHCO3dd(1,m)=2*(MHCO3(2,m) - MHCO3(1,m))/(Deltar * Deltar);
+    MCO3dd(1,m)=2*(MCO3(2,m) - MCO3(1,m))/(Deltar * Deltar);
+    MH2Odd(1,m)=2*(MH2O(2,m) - MH2O(1,m))/(Deltar * Deltar);
+    Vdd(1,m)=(CHO*MHOdd(1,m)+CHCO3*MHCO3dd(1,m)+2*CCO3*MCO3dd(1,m))/(CHO*MHO(1,m)+CHCO3*MHCO3(1,m)+4*CCO3*MCO3(1,m))  
+
+
+        // Quantities diffusing between t_m and t_(m+1) at the center
+        // With the charged species, we consider that the flux is the sum of the
+        // diffusion current and the drift current.
+        DeltaNHO2 = Deltat*CHO/9*(MHOdd(1,m) - MHO(1,m)*Vdd(1,m));
+        DeltaNHCO32 = Deltat*CHCO3/9*(MHCO3dd(1,m) - MHCO3(1,m)*Vdd(1,m));
+        DeltaNCO32 = Deltat*CCO3/9*(MCO3dd(1,m) - 2*MCO3(1,m)*Vdd(1,m));
+        DeltaNH2O2 = Deltat/9*MH2Odd(1,m);
+
+
+    // Alpha (X)
+    if (MHO(1,m) + DeltaNHO2) > (MHCO3(1,m) + DeltaNHCO32) then
+        a = -(MHCO3(1,m) + DeltaNHCO32);
+    else
+        a = - (MHO(1,m) + DeltaNHO2);
+    end
+
+    if (MCO3(1,m) + DeltaNCO32) > (MH2O(1,m) + DeltaNH2O2) then
+        b = (MH2O(1,m) + DeltaNH2O2);
+    else
+        b = (MCO3(1,m) + DeltaNCO32);
+    end
+
+    // X must be comprised between a and b : a<X<b
+    a2 = a;
+    b2 = b;
+
+    K2a = kp * (MH2O(1,m) + DeltaNH2O2 - a)^p;
+    K2b = kp * (MH2O(1,m) + DeltaNH2O2 - b)^p;
+
+    fa = K2a * (MHO(1,m) + DeltaNHO2 + a) * (MHCO3(1,m) + DeltaNHCO32 + a) - (MCO3(1,m) + DeltaNCO32 - a) * (MH2O(1,m) + DeltaNH2O2 - a);
+    fb = K2b * (MHO(1,m) + DeltaNHO2 + b) * (MHCO3(1,m) + DeltaNHCO32 + b) - (MCO3(1,m) + DeltaNCO32 - b) * (MH2O(1,m) + DeltaNH2O2 - b);
+
+
+    if (b2-a2)<0 then
+        warning ("absurd alpha boundaries")
+        return
+    end
+
+    eps = 1e-9;
+    while (b2-a2) >eps
+        if (fa*fb>0) then
+            warning("fa and fb have the same sign")
+            return
+        end
+        X(1,m) = (a2+b2)/2;
+        K2X = kp * (MH2O(1,m) + DeltaNH2O2 - X(1,m))^p;
+        fX = K2X * (MHO(1,m) + DeltaNHO2 + X(1,m)) * (MHCO3(1,m) + DeltaNHCO32 + X(1,m)) - (MCO3(1,m) + DeltaNCO32 - X(1,m)) * (MH2O(1,m) + DeltaNH2O2 - X(1,m));
+        if (sign(fX) == sign(fa)) then
+            a2 = X(1,m);
+            fa = fX;
+            K2a = K2X;
+        else
+            b2 = X(1,m);
+            fb = fX;
+            K2b = K2X;
+        end
+    end
+
+    if X(1,m) - a < 0 then
+        warning ("alpha is not bounded CENTER")
+        return
+    end
+
+    if X(1,m) - b > 0 then
+        warning ("alpha is not bounded CENTER")
+        return
+    end
+    
+    
+        // At t + Deltat: calculation of the new concentration and flux at t_(m+1)
+    MHO(1,m+1) = MHO(1,m) + DeltaNHO2 + X(1,m);
+    MHCO3(1,m+1) = MHCO3(1,m) + DeltaNHCO32 + X(1,m);
+    MCO3(1,m+1) = MCO3(1,m) + DeltaNCO32 - X(1,m);
+    MH2O(1,m+1) = MH2O(1,m) + DeltaNH2O2 - X(1,m);
+    MDIC(1,m+1) = MCO3(1,m+1) + MHCO3(1,m+1);
+
+    JHO(1,m)= 0
+    JH2O(1,m)= 0
+    JHCO3(1,m)= 0
+    JCO3(1,m)= 0
+    JDIC(1,m)= 0
+
+
+
+
+
+
+//-----------------v. Reajusting the Boundary conditions at r=R ----------------
+
+        // By the carbon quantity: the method used in this program to determine the evolution of PCO2 with time
+        // is to consider that the overall carbon quantity (in the bead + in the air) has to remain constant. Thus, at any time, we can calculate
+        // the total carbon quantity in the bead (HCO3- & CO3--) and adjust PCO2 so that the sum remains equal to the carbon quantity calculated at the begining
+        // In our specific case, we will compare the carbon quantity at t_m with the carbon quantity at t_(m+1)
+        
+                        if m > 1 then 
+                            Delta_carbon = 0;
+                            for j = 1 : J
+                                Delta_carbon = Delta_carbon + ((j-0.5)*Deltar)^2*0.5*((MHCO3(j+1,m) + MHCO3(j,m)) - (MHCO3(j,m-1) + MHCO3(j+1,m-1)) + (MCO3(j+1,m) + MCO3(j,m)) - (MCO3(j+1,m-1) + MCO3(j,m-1)))// we can approximate the bead to homogeneous nested shells with species' concentrations changing from one shell to the other.
+                            end
+                            PCO2R(m+1) =  PCO2R(m) - 3 * kC * Deltar * Delta_carbon
+                        else PCO2R(m+1) =  PCO2R(m); 
+                        end 
+                        JDIC(J+1,m) = 3*(PCO2R(m+1)-PCO2R(m))/(kC*Deltat); // carbon flux at the boundary
+                
+                        if PCO2R(m+1)<0 then
+                            warning ("Negative CO2 partial Pressure")
+                            return 
+                        end
+
+
+        // We now have to reajust NHO, NHCO3 and NCO3 on the surface. We have 3 equations:
+        // * K1 = NHCO3 / (NHO * PCO2) (chemical equilibrium)
+        // * K2 = (NCO3 * NH2O) / (NHCO3 * NHO) (chemical equilibrium)
+        // * NHCO3 + NHO + 2NCO3 = 1 (charge neutrality)
+        // and 3 unknown: NHO, NHCO3 and NCO3.
+        // By combining the 3 equations, we find that NHCO3 verifies:
+        // 2 * ((ka * K2R(m+1))/(PH2OR(m+1) * PCO2R(m+1) * K1)) * NHCO3R(m+1)*NHCO3R(m+1) + NHCO3R(m+1)*(1 + 1/(PCO2R(m+1)
+        // * K1)) - 1 = 0.
+        // We use a bisection method to solve this equation.
+    
+        a4 = 0;
+        b4 = 1;
+    
+        fa4 = 2 * ((ka * K2R(m+1))/(PH2OR(m+1) * PCO2R(m+1) * K1)) * a4*a4 + a4*(1 + 1/(PCO2R(m+1) * K1)) - 1;
+        fb4 = 2 * ((ka * K2R(m+1))/(PH2OR(m+1) * PCO2R(m+1) * K1)) * b4*b4 + b4*(1 + 1/(PCO2R(m+1) * K1)) - 1;
+    
+        eps = 1e-9;
+        while (b4-a4) >eps
+            X4 = (a4+b4)/2;
+            fX4 = 2 * ((ka * K2R(m+1))/(PH2OR(m+1) * PCO2R(m+1) * K1)) * X4*X4 + X4*(1 + 1/(PCO2R(m+1) * K1)) - 1;
+            if (sign(fX4) == sign(fa4)) then
+                a4 = X4;
+                fa4 = fX4;
+            else
+                b4 = X4;
+                fb4 = fX4;
+            end
+        end
+    
+        NHCO3R(m+1) = X4;
+    
+        // Once NHCO3R is known, it is simple to find NHOR and NCO3R.
+        NHOR(m+1) = NHCO3R(m+1) / (K1 * PCO2R(m+1));
+        NCO3R(m+1) = NHCO3R(m+1) * NHOR(m+1) * ka * K2R(m+1) /PH2OR(m+1);
+
+
+        // New boundary conditions at r = R with r(J+1) = R
+        MHCO3(J+1,m+1) = NHCO3R(m+1);
+        MHO(J+1,m+1) = NHOR(m+1);
+        MCO3(J+1,m+1) = NCO3R(m+1);
+        MH2O(J+1,m+1) = NH2OR(m+1);
+        MDIC(J+1,m+1) = MCO3(J+1,m+1) + MHCO3(J+1,m+1);
+
+        //calculating the flux at the borders: r(J+1) = R by doing a linear extrapolation of concentrations' first derivative
+        MHOd(J+1,m)= MHOd(J,m) + MHOdd(J,m) * Deltar
+        MHCO3d(J+1,m)= MHCO3d(J,m) + MHCO3dd(J,m) * Deltar
+        MCO3d(J+1,m)= MCO3d(J,m) + MCO3dd(J,m) * Deltar
+        MH2Od(J+1,m)= MH2Od(J,m) + MH2Odd(J,m) * Deltar
+        Vd(J+1,m)= Vd(J,m) + Vdd(J,m) * Deltar
+        
+        
+        JHO(J+1,m)= - CHO * MHOd(J+1,m) + CHO * Vd(J+1,m) * MHO(J+1,m)
+        JH2O(J+1,m)= - CH2O * MH2Od(J+1,m)
+        JHCO3(J+1,m)= - CHCO3 * MHCO3d(J+1,m) + CHCO3 * Vd(J+1,m) * MHCO3(J+1,m)
+        JCO3(J+1,m)= - CCO3 * MCO3d(J+1,m) + 2 * CCO3 * Vd(J+1,m) * MCO3(J+1,m)
+end
+
+
+
+
+
+
+//----------------------------vi. verifications---------------------------------
+
+//--------------------------------------------- Charge neutrality
+// We want to check that charge neutrality is verified everywhere.
+
+delta_eletromax = 0;
+for m=1:M
+    for j = 1:J+1
+        delta_electro(j,m) = (MHCO3(j,m+1) + MHO(j,m+1) + 2*MCO3(j,m+1)) - (MHO(j,m) + MHCO3(j,m) + 2*MCO3(j,m));
+        if abs(delta_electro(j,m)) > delta_eletromax then
+            delta_electromax = abs(delta_electro(j,m));
+            jmax = j;
+            mmax = m;
+        end
+    end
+end
+
+disp(delta_electromax,"delta electroneutrality max = ")
+
+
+//--------------------------------------------- Carbon conservation
+// We want to check the carbon conservation during the whole process and the evolution of all the species
+
+for m=1:M+1
+    H2Otot(m) = 0
+    for j = 1:J
+        H2Otot(m) = H2Otot(m) + ((j-0.5)*Deltar)^2*0.5*(MH2O(j+1,m)+MH2O(j,m));
+    end
+end
+
+
+for m=1:M+1
+    HOtot(m) = 0
+    for j = 1:J
+        HOtot(m) = HOtot(m) + ((j-0.5)*Deltar)^2*0.5*(MHO(j+1,m)+MHO(j,m));
+    end
+end
+
+
+for m=1:M+1
+    HCO3tot(m) = 0
+    for j = 1:J
+        HCO3tot(m) = HCO3tot(m) + ((j-0.5)*Deltar)^2*0.5*(MHCO3(j+1,m)+MHCO3(j,m));
+    end
+end
+
+for m=1:M+1
+    CO3tot(m) = 0
+    for j = 1:J
+        CO3tot(m) = CO3tot(m) + ((j-0.5)*Deltar)^2*0.5*(MCO3(j+1,m)+MCO3(j,m));
+    end
+end
+
+for m =1 : M+1
+carbon_quantity(m) = 0
+end
+
+absolute_carbon_var = 0
+if kC > 0 then
+    for m=1:M+1
+        carbon_quantity(m) = PCO2R(m) + 3*kC*Deltar*(HCO3tot(m) + CO3tot(m));
+        if m >1 then
+            absolute_carbon_var = absolute_carbon_var + abs(carbon_quantity(m)-carbon_quantity(m-1))
+        end
+    end
+end
+
+carbon_error = 100*(max(carbon_quantity)-min(carbon_quantity))/min(carbon_quantity);
+delta_PCO2 = (max(carbon_quantity)-min(carbon_quantity))*Peq;
+absolute_delta_PCO2 = absolute_carbon_var*Peq;
+carbon_evolution = carbon_quantity(M)-carbon_quantity(1);
+
+
+disp(carbon_error,"carbon quantity variation = ")
+
+disp(100*absolute_carbon_var/min(carbon_quantity), "sum of absolute carbon quantity variation = ")
+
+disp(delta_PCO2,"equivalent PCO2 variation in ppm = ")
+
+disp(absolute_delta_PCO2,"equivalent PCO2 absolute variation in ppm = ")
+
+disp(carbon_evolution, "carbon quantity evolution between the t=0 and t=T = ")
+
+
+
+
+for m =1 : M+1
+PCO2_OUT(m,1) = PCO2R(1,m)*Peq;
+PH2O_OUT(m,1) = PH2OR(1,m)*Peq;
+end
+
+
+
+
+//------------------------------vii. Plots -------------------------------------
+
+
+
+//In order to have better graphs, we first need to define a scale for each concentration, pressure or flux
+
+nDICmax = max(max(MDIC));
+nDICmin = min(min(MDIC));
+JDICmax = max(max(JDIC));
+JDICmin = min(min(JDIC));
+
+nH2Omax = max(max(MH2O));
+nH2Omin = min(min(MH2O));
+JH2Omax = max(max(JH2O));
+JH2Omin = min(min(JH2O));
+
+nHOmax = max(max(MHO));
+nHOmin = min(min(MHO));
+JHOmax = max(max(JHO));
+JHOmin = min(min(JHO));
+
+nHCO3max = max(max(MHCO3));
+nHCO3min = min(min(MHCO3));
+JHCO3max = max(max(JHCO3));
+JHCO3min = min(min(JHCO3));
+
+nCO3max = max(max(MCO3));
+nCO3min = min(min(MCO3));
+JCO3max = max(max(JCO3));
+JCO3min = min(min(JCO3));
+
+Xmax = max(max(X));
+Xmin = min(min(X));
+
+PCO2Rmin = min(min(PCO2R));
+PCO2Rmax = max(max(PCO2R));
+
+
+
+
+
+//-----------------------------------------------------------Overall carbon DIC
+//figure(1)
+//Xaxis=linspace(0,R,J+1);
+//Yaxis=linspace(0,T,M+1);
+//xset("colormap",jetcolormap(64));
+//colorbar(nDICmin,nDICmax,[1, 64]);
+//plot3d1(Xaxis,Yaxis,(MDIC-nDICmin)/(nDICmax-nDICmin),flag=[-1,6,4]);
+//a = gcf();
+//a.background=-2;
+//xgrid(1, 1, 7);
+//xlabel('rj','fontsize',5)
+//ylabel('tm','fontsize',5)
+//zlabel('n(DIC)','fontsize',5)
+////
+//figure(2)
+//Yaxis=linspace(0,T,M+1);
+//plot(Yaxis',carbon_quantity);
+//xlabel('tm','fontsize',5)
+//ylabel('carbon quantity','fontsize',5)
+//
+//figure(3)
+//Xaxis=linspace(0,R,J+1);
+//Yaxis=linspace(0,T,M);
+//xset("colormap",jetcolormap(64));
+//colorbar(JDICmin,JDICmax,[1, 64]);
+//plot3d1(Xaxis,Yaxis,JDIC/(JDICmax-JDICmin),flag=[-1,6,4]);
+//a = gcf();
+//a.background=-2;
+//xgrid(1, 1, 7);
+//xlabel('rj','fontsize',5)
+//ylabel('tm','fontsize',5)
+//zlabel('J(DIC)','fontsize',5)
+//
+//figure(4)
+//Xaxis=linspace(0,R,J+1);
+//plot(Xaxis',JDIC(:,M));
+//xlabel('rj','fontsize',5)
+//ylabel('JDIC at t=T','fontsize',5)
+
+
+
+
+
+//--------------------------------------------------------------------------H2O
+//figure(5)
+//Xaxis=linspace(0,R,J+1);
+//Yaxis=linspace(0,T,M+1);
+//xset("colormap",jetcolormap(64));
+//colorbar(nH2Omin,nH2Omax,[1, 64]);
+//plot3d1(Xaxis,Yaxis,(MH2O-nH2Omin)/(nH2Omax-nH2Omin),flag=[-1,6,4]);
+//a = gcf();
+//a.background=-2;
+//xgrid(1, 1, 7);
+//xlabel('rj','fontsize',5)
+//ylabel('tm','fontsize',5)
+//zlabel('n(H2O)','fontsize',5)
+//
+//figure(6)
+//Yaxis=linspace(0,T,M+1);
+//plot(Yaxis',H2Otot);
+//xlabel('tm','fontsize',5)
+//ylabel('H2O quantity','fontsize',5)
+//
+//figure(7)
+//Xaxis=linspace(0,R,J+1);
+//Yaxis=linspace(0,T,M);
+//xset("colormap",jetcolormap(64));
+//colorbar(JH2Omin,JH2Omax,[1, 64]);
+//plot3d1(Xaxis,Yaxis,JH2O/(JH2Omax-JH2Omin),flag=[-1,6,4]);
+//a = gcf();
+//a.background=-2;
+//xgrid(1, 1, 7);
+//xlabel('rj','fontsize',5)
+//ylabel('tm','fontsize',5)
+//zlabel('J(H2O)','fontsize',5)
+
+
+
+
+
+//--------------------------------------------------------------------------HO-
+//figure(8)
+//Xaxis=linspace(0,R,J+1);
+//Yaxis=linspace(0,T,M+1);
+//xset("colormap",jetcolormap(64));
+//colorbar(nHOmin,nHOmax,[1, 64]);
+//plot3d1(Xaxis,Yaxis,(MHO-nHOmin)/(nHOmax-nHOmin),flag=[-1,6,4]);
+//a = gcf();
+//a.background=-2;
+//xgrid(1, 1, 7);
+//xlabel('rj','fontsize',5)
+//ylabel('tm','fontsize',5)
+//zlabel('n(HO)','fontsize',5)
+//
+//figure(9)
+//Yaxis=linspace(0,T,M+1);
+//plot(Yaxis',HOtot);
+//xlabel('tm','fontsize',5)
+//ylabel('HO quantity','fontsize',5)
+//
+//figure(10)
+//Xaxis=linspace(0,R,J+1);
+//Yaxis=linspace(0,T,M);
+//xset("colormap",jetcolormap(64));
+//colorbar(JHOmin,JHOmax,[1, 64]);
+//plot3d1(Xaxis,Yaxis,JHO/(JHOmax-JHOmin),flag=[-1,6,4]);
+//a = gcf();
+//a.background=-2;
+//xgrid(1, 1, 7);
+//xlabel('rj','fontsize',5)
+//ylabel('tm','fontsize',5)
+//zlabel('J(HO)','fontsize',5)
+
+
+
+
+
+//------------------------------------------------------------------------HCO3-
+//figure(11)
+//Xaxis=linspace(0,R,J+1);
+//Yaxis=linspace(0,T,M+1);
+//xset("colormap",jetcolormap(64));
+//colorbar(nHCO3min,nHCO3max,[1, 64]);
+//plot3d1(Xaxis,Yaxis,(MHCO3-nHCO3min)/(nHCO3max-nHCO3min),flag=[-1,6,4]);
+//a = gcf();
+//a.background=-2;
+//xgrid(1, 1, 7);
+//xlabel('rj','fontsize',5)
+//ylabel('tm','fontsize',5)
+//zlabel('n(HCO3)','fontsize',5)
+////
+//figure(12)
+//Yaxis=linspace(0,T,M+1);
+//plot(Yaxis',HCO3tot);
+//xlabel('tm','fontsize',5)
+//ylabel('HCO3 quantity','fontsize',5)
+////
+//figure(13)
+//Xaxis=linspace(0,R,J+1);
+//Yaxis=linspace(0,T,M);
+//xset("colormap",jetcolormap(64));
+//colorbar(JHCO3min,JHCO3max,[1, 64]);
+//plot3d1(Xaxis,Yaxis,JHCO3/(JHCO3max-JHCO3min),flag=[-1,6,4]);
+//a = gcf();
+//a.background=-2;
+//xgrid(1, 1, 7);
+//xlabel('rj','fontsize',5)
+//ylabel('tm','fontsize',5)
+//zlabel('J(HCO3)','fontsize',5)
+
+
+
+
+
+//------------------------------------------------------------------------CO3--
+//figure(14)
+//Xaxis=linspace(0,R,J+1);
+//Yaxis=linspace(0,T,M+1);
+//xset("colormap",jetcolormap(64));
+//colorbar(nCO3min,nCO3max,[1, 64]);
+//plot3d1(Xaxis,Yaxis,(MCO3-nCO3min)/(nCO3max-nCO3min),flag=[-1,6,4]);
+//a = gcf();
+//a.background=-2;
+//xgrid(1, 1, 7);
+//xlabel('rj','fontsize',5)
+//ylabel('tm','fontsize',5)
+//zlabel('n(CO3)','fontsize',5)
+//
+//figure(15)
+//Yaxis=linspace(0,T,M+1);
+//plot(Yaxis',CO3tot);
+//xlabel('tm','fontsize',5)
+//ylabel('CO3 quantity','fontsize',5)
+//
+//figure(16)
+//Xaxis=linspace(0,R,J+1);
+//Yaxis=linspace(0,T,M);
+//xset("colormap",jetcolormap(64));
+//colorbar(JCO3min,JCO3max,[1, 64]);
+//plot3d1(Xaxis,Yaxis,JCO3/(JCO3max-JCO3min),flag=[-1,6,4]);
+//a = gcf();
+//a.background=-2;
+//xgrid(1, 1, 7);
+//xlabel('rj','fontsize',5)
+//ylabel('tm','fontsize',5)
+//zlabel('J(CO3)','fontsize',5)
+
+
+
+
+
+//---------------------------------------------------------Extent of reaction X
+//figure(17)
+//Xaxis=linspace(0,R,J);
+//Yaxis=linspace(0,T,M);
+//xset("colormap",jetcolormap(64));
+//colorbar(Xmin,Xmax,[1, 64]);
+//plot3d1(Xaxis,Yaxis,X/(Xmax-Xmin),flag=[-1,6,4]);
+//a = gcf();
+//a.background=-2;
+//xgrid(1, 1, 7);
+//xlabel('rj','fontsize',5)
+//ylabel('tm','fontsize',5)
+//zlabel('X(x,t)','fontsize',5)
+
+
+
+
+
+
+//-------------------------------------------------------------------------PH2O
+figure(18)
+Yaxis=linspace(0,T,M+1);
+plot(Yaxis',PH2OR'*Peq);
+xlabel("tm","fontsize",5)
+ylabel("PH2O","fontsize",5)
+
+
+
+
+
+//-------------------------------------------------------------------------PCO2
+figure(19)
+Yaxis=linspace(0,T,M+1);
+plot(Yaxis',PCO2R'*Peq);
+xlabel("tm","fontsize",5)
+ylabel("PCO2","fontsize",5)
+
+
+
+
+
+
+
+//---------------------viii. Export in Excel sheet------------------------------
+
+
+
+// These three lines have to be commented out in order to export Yaxis, PH2O and PCO2 values into Excel sheets.
+
+//write_csv(Yaxis', strcat(["/Users/robin/Desktop/AfterModif/FirstFitting/Yaxis.xls"]),"/t",',')
+//write_csv(PH2OR'*Peq, strcat(["/Users/robin/Desktop/AfterModif/FirstFitting/PH2O.xls"]),"/t",',')
+//write_csv(PCO2R'*Peq, strcat(["/Users/robin/Desktop/AfterModif/FirstFitting/PCO2.xls"]),"/t",',')
+
+
+
+
+//-----------------------ix. Export of the Plots--------------------------------
+
+
+// 1 - frequency sweep Plot export---------------------------------------------- 
+//figure(10+Nb)
+//Yaxis=linspace(0,T,M+1);
+//plot(Yaxis',PH2OR*Peq);
+//xlabel("tm (1 unit = 15.8 min)","fontsize",5)
+//ylabel("PH2O","fontsize",5)
+//title("PH2O for frequency sweep")
+////f=gcf();
+////f.figure_size=[3000,3000]
+//xs2png(1,strcat(["/Users/robin/Desktop/fsweep/Plot Nb of periods = ",string(Nb)," for PH2O & DC = ",string(carbon_error)," & ADC = ",string(100*absolute_carbon_var/min(carbon_quantity)),".png"]))
+//delete(gcf());
+
+
+//figure(20+Nb)
+//Yaxis=linspace(0,T,M+1);
+//plot(Yaxis,PCO2R*Peq, color='red');
+//xlabel("tm (1 unit = 15.8 min)","fontsize",5)
+//ylabel("PCO2","fontsize",5)
+//title("PCO2 for frequency sweep")
+////g=gcf();
+////g.figure_size=[3000,3000]
+//xs2png(2,strcat(["/Users/robin/Desktop/fsweep/Plot Nb of periods = ",string(Nb)," for PCO2 & DPCO2 = ",string(delta_PCO2)," & ADPCO2 = ",string(absolute_delta_PCO2),".png"]))
+//delete(gcf());
+
+
+
+
+
+// 2 - single freq Plot export-------------------------------------------------- 
+//figure(1000+k)
+//Yaxis=linspace(0,T,M+1);
+//plot(Yaxis',PH2OR*Peq);
+//xlabel("tm (1 unit = 15.8 min)","fontsize",5)
+//ylabel(strcat(["PH2O for period T = ",string(5*x)," min"]),"fontsize",5)
+//f=gcf();
+//f.figure_size=[3000,3000]
+//xs2png(1000+x,strcat(["/Users/robin/Desktop/Figures Scilab/Plot T = ",string(5*x)," min for PH2O & DC = ",string(carbon_error)," & ADC = ",string(100*absolute_carbon_var/min(carbon_quantity)),".png"]))
+//delete(gcf());
+//
+//
+//figure(k)
+//Yaxis=linspace(0,T,M+1);
+//plot(Yaxis,PCO2R*Peq, color='red');
+//xlabel("tm (1 unit = 15.8 min)","fontsize",5)
+//ylabel(strcat(["PCO2 for period T = ",string(5*x)," min"]),"fontsize",5)
+//g=gcf();
+//g.figure_size=[3000,3000]
+//xs2png(x,strcat(["/Users/robin/Desktop/Figures Scilab/Plot T = ",string(5*x)," min for PCO2 & DPCO2 = ",string(delta_PCO2)," & ADPCO2 = ",string(absolute_delta_PCO2),".png"]))
+//delete(gcf());
+
+
+
+//end               //This "end" will close the "for-loop" opened in the parameters block.
+
+
+
+
+
+// # - Other Plot export-------------------------------------------------- 
+//
+//figure(20)
+//Yaxis=linspace(0,T,M+1);
+//plot(Yaxis,PCO2R*Peq, color='red');
+//xlabel("tm (1 unit = 15.8 min)","fontsize",5)
+//ylabel(strcat(["PCO2 for period T = ",string(5*x)," min"]),"fontsize",5)
+////g=gcf();
+////g.figure_size=[3000,3000]
+//xs2png(x,strcat(["/Users/robin/Desktop/fitting/kp2/",string(x),". Plot kp = ",string(kp),"  for PCO2 & DPCO2 = ",string(delta_PCO2)," & ADPCO2 = ",string(absolute_delta_PCO2),".png"]))
+//delete(gcf());
