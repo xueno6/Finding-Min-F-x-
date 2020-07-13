@@ -1,14 +1,10 @@
-function result=equationfft(x)
-warning off;
+function result=equation(x)
 T1 = 20*60;T2 = 50*60;T3 = 80*60;T4 = 140*60;NB1 = 20;NB2 = 15;NB3 = 15;NB4 = 12;
-T = ((2+4*7)*3600 + T1*NB1 + T2*NB2 + T3*NB3 + T4*NB4)/511.8;   % //Overall time. The coming line giving the definition of T (cf # - General parameters) has to be commented and replaced by this one.
-
+T = ((2+4*7)*3600 + T1*NB1 + T2*NB2 + T3*NB3 + T4*NB4)/952;   % //Overall time. The coming line giving the definition of T (cf # - General parameters) has to be commented and replaced by this one.
 %// # - General parameters------------------------------------------------------ 
-
 %// Definition of T (time) and R (radius)
 %// T = 20;     // 1 T unit <=> 952 sec (15.873 min)
 R = 1;     % // Since the equations are nondimensionalized with R as a reference space unit, our nondimensionalized bead' radius equals to one
-
 %// "Size" of matrices - the real matrices have the size (J+1,M+1)
 J = 5;
 M = 2*floor(2*(T*J*J)/(R*R));    % //Based on the Courant–Friedrichs–Lewy condition
@@ -25,26 +21,26 @@ Deltar = R/J;
 
 %// Nondimensionalized diffusion coefficients taking water diffusion coefficient as a reference unit
 CH2O =1;
-CHO = x(1);
-CHCO3 =x(2);
-CCO3 = x(3); 
+CHO = x(1);%4e-1;
+CHCO3 =x(2);% 1.2e-1;
+CCO3 = x(3); % 1.5e-1;
 
 %// K1, is the chemical equilibrium constant for the reaction: CO2 + HO- = HCO3-
 %// K1 is supposed to be constant here.
-K1 = x(4);
+K1 = x(4);%4e9;
 
 %// ka is the Henry constant. It is the link between the partial pressure of water and the water
 %// quantity on the surface: P(H2O) = ka * n(H2O)
-ka = x(5);
+ka = x(5);%1e-5;
 
 %//kC is the ratio Volume(Bead)/Volume(Air) that will link P(CO2) with NHCO3 + NCO3
-kC =x(6);
+kC =x(6);% 4e-3;
 
 %// K2 is the chemical equilibrium constant for the reaction: HCO3- + HO- = CO3-- + H2O. We'll make the assumption
 %//that K2 is also a function of NH2O with K2 = kp * NH2O^p. This relation is true everywhere. Here we define the value
 %// of kp and p.
-kp =x(7);
-p = x(8);
+kp =x(7);% 5e-12;
+p = x(8);%9.5;
 
 %// Peq is the reference pressure unit in our nondimensionlized equations
 Peq = 5.104e7;% //unit = 0,1 Pa
@@ -126,14 +122,14 @@ end
 for m = 1 : M+1
     PH2OR(m) = PH2O;
 end 
-m00 = round((2*3600*M)/(511.8*T))+1;
-m0 = round((7*3600*M)/(511.8*T));
+m00 = round((2*3600*M)/(952*T))+1;
+m0 = round((7*3600*M)/(952*T));
 %//
 %//
 %////T1 = 20 min - 20 periods
-w1 = 2*pi/(T1/511.8);
+w1 = 2*pi/(T1/952);
 m1 = m00;
-m11 = m1 + round((T1*NB1*M)/(511.8*T));
+m11 = m1 + round((T1*NB1*M)/(952*T));
 if NB1 > 0
 for m = m1 : m11
     PH2OR(m) = PH2O + PH2O/3*sin(w1*(m-1-(m1-1))*T/M);
@@ -142,9 +138,9 @@ end
 % //
 % //
 % ////T2 = 50 min - 20 periods
-w2 = 2*pi/(T2/511.8);
+w2 = 2*pi/(T2/952);
 m2 = m11 + m0;
-m22 = m2 + round((T2*NB2*(M))/(511.8*T));
+m22 = m2 + round((T2*NB2*(M))/(952*T));
 if NB2 > 0 
 for m = m2 : m22
     PH2OR(m) = PH2O + PH2O/3*sin(w2*(m-1-(m2-1))*T/M);
@@ -152,9 +148,9 @@ end
 end
 % //
 % ////T3 = 80 min - 15 periods
-w3 = 2*pi/(T3/511.8);
+w3 = 2*pi/(T3/952);
 m3 = m22 + m0;
-m33 = m3 + round((T3*NB3*(M))/(511.8*T));
+m33 = m3 + round((T3*NB3*(M))/(952*T));
 if NB3 > 0 
 for m = m3 : m33
     PH2OR(m) = PH2O + PH2O/3*sin(w3*(m-1-(m3-1))*T/M);
@@ -163,16 +159,14 @@ end
 % //
 % //
 % ////T4 = 140 min - 10 periods
-w4 = 2*pi/(T4/511.8);
+w4 = 2*pi/(T4/952);
 m4 = m33 + m0;
-m44 = m4 + round((T4*NB4*(M))/(511.8*T));
+m44 = m4 + round((T4*NB4*(M))/(952*T));
 if NB4 > 0 
 for m = m4 : m44
     PH2OR(m) = PH2O + PH2O/3*sin(w4*(m-1-(m4-1))*T/M);
 end 
 end
-% A=load('P.mat');
-% PH2OR=A.PH2OR;
 %%------------------------------------------------------------
 for m = 1:M+1
     %// By definition for H2O
@@ -511,74 +505,9 @@ PH2O_OUT(m,1) = PH2OR(1,m)*Peq;
 end
 
 % //------------------------------vii. Plots -------------------------------------
-input = (PH2OR'*Peq/1000)';
+input = (PH2OR'*Peq)';
 output = (PCO2R'*Peq)';
-% data = zeros(length(input),2)
-A=load('data.mat');
-data2 = [A.data(1:68347,:), input',output'];
-groups = [
-    m1+4, m11+4, 1, 2, 12000;
-    m2+5, m22+5, 1, 2, 45000;
-    m3+6, m33+6, 1, 2, 72000;
-    m4+7, m44+7, 1, 2, 100800;
-    m1, m11, 3, 4, 12000;
-    m2, m22, 3, 4, 45000;
-    m3, m33, 3, 4, 72000;
-    m4, m44, 3, 4, 100800
-    ]' - [1; 1; 0; 0; 0];
-
-result = splitapply(@(p) calculateDistance(data2(p(1):p(2), p(3):p(4))', p(5), 0.01, @evaluateC),...
-    groups, 1:size(groups, 2));
-
-result = reshape(result, 2, []);
-
-result = sum(diff(result, 1));
-
-result=abs(result);
-
-function result = evaluateC(CF, ~, ~, ~, ~, ~)
-result = sqrt(sum(diff(CF, 1, 1).^2, [2, 3]));
-end
-
-function result = evaluateP(~, ~, PF, f, ~, ~)
-f(:, 1) = [];
-PF(:, 1) = [];
-result = sqrt(sum(diff(PF./(2*pi*f), 1, 1).^2, 2));
-end
-
-function result = evaluateAP(~, AF, PF, f, ~, ~)
-f(:, 1) = [];
-PF(:, 1) = [];
-AF(:, 1) = [];
-% figure();
-% plot(f, PF(1, :), f, PF(2, :));
-result = sqrt(sum(diff(PF./(2*pi*f), 1, 1).^2.*prod(AF./max(AF, 2), 1), 2));
-end
-
-function [CF, AF, PF, f, Fs, L] = fftAnalyze(target, duration, threshold)
-if nargin == 2
-    threshold = 1e-3;
-elseif nargin ~= 3
-    error('2 or 3 arguments are required to perform fftAnalyze.');
-end
-L = size(target, 2);
-Fs = 1/(duration/L);
-Y = fft(target, L, 2);
-P2 = Y/L;
-P1 = P2(:, 1:(L/2 + 1));
-P1(:, 2:end - 1) = 2*P1(:, 2:end - 1);
-f = Fs*(0:(L/2))/L;
-AF = abs(P1);
-maxAF = max(AF, [], 2);
-PF = angle(P1).*(AF > maxAF*threshold);
-CF(:, :, 1) = -AF.*sin(PF);
-CF(:, :, 2) = AF.*cos(PF);
-end
-
-function distance = calculateDistance(target, duration, threshold, evalute)
-[CF, AF, PF, f, Fs, L] = fftAnalyze(target, duration, threshold);
-distance = evalute(CF, AF, PF, f, Fs, L);
-end
+result = calculateDistance([input; output], 24000, 0, @evaluateC);
 end
 
 
