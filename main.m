@@ -27,7 +27,7 @@ result=100;
 min_result=1000;
 iter=1;
 min_x=ones(8,1);
-while result>93 || iter<100
+while result>93 && iter<100
     x_old=x;
 for n=1:7
     switch(n)
